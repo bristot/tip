@@ -2861,6 +2861,13 @@ int dl_task_can_attach(struct task_struct *p, const struct cpumask *cs_cpus_allo
 	bool overflow;
 	int ret;
 
+	/*
+	 * The task is not moving to another root domain, so it is
+	 * already accounted.
+	 */
+	if (cpumask_intersects(task_rq(p)->rd->span, cs_cpus_allowed))
+		return 0;
+
 	dest_cpu = cpumask_any_and(cpu_active_mask, cs_cpus_allowed);
 
 	rcu_read_lock_sched();

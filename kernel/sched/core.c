@@ -7144,8 +7144,7 @@ int task_can_attach(struct task_struct *p,
 		goto out;
 	}
 
-	if (dl_task(p) && !cpumask_intersects(task_rq(p)->rd->span,
-					      cs_cpus_allowed))
+	if (dl_task(p))
 		ret = dl_task_can_attach(p, cs_cpus_allowed);
 
 out:
