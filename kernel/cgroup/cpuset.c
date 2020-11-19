@@ -2132,6 +2132,7 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 	struct cgroup_subsys_state *css;
 	struct cpuset *cs;
 	struct task_struct *task;
+	int exclusive;
 	int ret;
 
 	/* used later by cpuset_attach() */
@@ -2146,8 +2147,10 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 	    (cpumask_empty(cs->cpus_allowed) || nodes_empty(cs->mems_allowed)))
 		goto out_unlock;
 
+	exclusive = is_cpu_exclusive(cs);
+
 	cgroup_taskset_for_each(task, css, tset) {
-		ret = task_can_attach(task, cs->cpus_allowed);
+		ret = task_can_attach(task, cs->cpus_allowed, exclusive);
 		if (ret)
 			goto out_unlock;
 		ret = security_task_setscheduler(task);
