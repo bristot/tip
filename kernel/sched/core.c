@@ -7126,7 +7126,7 @@ int cpuset_cpumask_can_shrink(const struct cpumask *cur,
 }
 
 int task_can_attach(struct task_struct *p,
-		    const struct cpumask *cs_cpus_allowed)
+		    const struct cpumask *cs_cpus_allowed, int exclusive)
 {
 	int ret = 0;
 
@@ -7145,7 +7145,7 @@ int task_can_attach(struct task_struct *p,
 	}
 
 	if (dl_task(p))
-		ret = dl_task_can_attach(p, cs_cpus_allowed);
+		ret = dl_task_can_attach(p, cs_cpus_allowed, exclusive);
 
 out:
 	return ret;
