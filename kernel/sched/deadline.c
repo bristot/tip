@@ -2853,7 +2853,8 @@ bool dl_param_changed(struct task_struct *p, const struct sched_attr *attr)
 }
 
 #ifdef CONFIG_SMP
-int dl_task_can_attach(struct task_struct *p, const struct cpumask *cs_cpus_allowed)
+int dl_task_can_attach(struct task_struct *p,
+		const struct cpumask *cs_cpus_allowed, int exclusive)
 {
 	unsigned long flags, cap;
 	unsigned int dest_cpu;
