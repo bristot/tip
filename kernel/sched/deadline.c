@@ -2863,6 +2863,13 @@ int dl_task_can_attach(struct task_struct *p,
 	int ret;
 
 	/*
+	 * The cpuset has no cpus assigned, so the thread will not
+	 * change its affinity.
+	 */
+	if (cpumask_empty(cs_cpus_allowed))
+		return 0;
+
+	/*
 	 * The task is not moving to another root domain, so it is
 	 * already accounted.
 	 */
