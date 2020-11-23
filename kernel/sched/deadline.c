@@ -2870,6 +2870,13 @@ int dl_task_can_attach(struct task_struct *p,
 		return 0;
 
 	/*
+	 * Do not allow moving tasks to non-exclusive cpusets
+	 * if bandwidth control is enabled.
+	 */
+	if (dl_bandwidth_enabled() && !exclusive)
+		return -EBUSY;
+
+	/*
 	 * The task is not moving to another root domain, so it is
 	 * already accounted.
 	 */
