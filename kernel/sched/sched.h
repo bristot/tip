@@ -2393,6 +2393,37 @@ void __dl_update(struct dl_bw *dl_b, s64 bw)
 		rq->dl.extra_bw += bw;
 	}
 }
+
+static inline
+int dl_task_cpu(struct task_struct *p)
+{
+	/*
+	 * We can only rely on p->cpu (used by task_rq()) of runnable tasks.
+	 */
+	if (p->on_rq)
+		return p->cpu;
+
+	/*
+	 * The p->cpu of non-runnable task migth be pointing a CPU
+	 * it cannot run anymore (see set_task_cpu()). Hence, let's
+	 * get a possible cpu from the current cpu_mask.
+	 */
+	return cpumask_any(p->cpus_ptr);
+
+}
+
+static inline
+struct root_domain *dl_task_rd(struct task_struct *p)
+{
+	int cpu = dl_task_cpu(p);
+	return cpu_rq(cpu)->rd;
+}
+
+static inline
+struct dl_bw *dl_task_root_bw(struct task_struct *p)
+{
+	return &dl_task_rd(p)->dl_bw;
+}
 #else
 static inline
 void __dl_update(struct dl_bw *dl_b, s64 bw)
@@ -2400,6 +2431,18 @@ void __dl_update(struct dl_bw *dl_b, s64 bw)
 	struct dl_rq *dl = container_of(dl_b, struct dl_rq, dl_bw);
 
 	dl->extra_bw += bw;
+}
+
+static inline
+int dl_task_cpu(struct task_struct *p)
+{
+	return 0;
+}
+
+static inline
+struct dl_bw *dl_task_root_bw(struct task_struct *p)
+{
+	return &task_rq(p)->dl.dl_bw;
 }
 #endif
 
