@@ -2672,8 +2672,8 @@ int sched_dl_overflow(struct task_struct *p, int policy,
 	u64 period = attr->sched_period ?: attr->sched_deadline;
 	u64 runtime = attr->sched_runtime;
 	u64 new_bw = dl_policy(policy) ? to_ratio(period, runtime) : 0;
-	int cpus, err = -1, cpu = task_cpu(p);
-	struct dl_bw *dl_b = dl_bw_of(cpu);
+	int cpus, err = -1, cpu = dl_task_cpu(p);
+	struct dl_bw *dl_b = dl_task_root_bw(p);
 	unsigned long cap;
 
 	if (attr->sched_flags & SCHED_FLAG_SUGOV)
