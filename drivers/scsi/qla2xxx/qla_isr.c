@@ -1838,6 +1838,7 @@ qla24xx_mbx_iocb_entry(scsi_qla_host_t *vha, struct req_que *req,
     struct mbx_24xx_entry *pkt)
 {
 	const char func[] = "MBX-IOCB2";
+	struct qla_hw_data *ha = vha->hw;
 	srb_t *sp;
 	struct srb_iocb *si;
 	u16 sz, i;
@@ -1846,6 +1847,18 @@ qla24xx_mbx_iocb_entry(scsi_qla_host_t *vha, struct req_que *req,
 	sp = qla2x00_get_sp_from_handle(vha, func, req, pkt);
 	if (!sp)
 		return;
+
+	if (sp->type == SRB_SCSI_CMD ||
+	    sp->type == SRB_NVME_CMD ||
+	    sp->type == SRB_TM_CMD) {
+		ql_log(ql_log_warn, vha, 0x509d,
+			"Inconsistent event entry type %d\n", sp->type);
+		if (IS_P3P_TYPE(ha))
+			set_bit(FCOE_CTX_RESET_NEEDED, &vha->dpc_flags);
+		else
+			set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
+		return;
+	}
 
 	si = &sp->u.iocb_cmd;
 	sz = min(ARRAY_SIZE(pkt->mb), ARRAY_SIZE(sp->u.iocb_cmd.u.mbx.in_mb));
@@ -2213,11 +2226,13 @@ qla24xx_tm_iocb_entry(scsi_qla_host_t *vha, struct req_que *req, void *tsk)
 	srb_t *sp;
 	struct srb_iocb *iocb;
 	struct sts_entry_24xx *sts = (struct sts_entry_24xx *)tsk;
+	u16 comp_status;
 
 	sp = qla2x00_get_sp_from_handle(vha, func, req, tsk);
 	if (!sp)
 		return;
 
+	comp_status = le16_to_cpu(sts->comp_status);
 	iocb = &sp->u.iocb_cmd;
 	type = sp->name;
 	fcport = sp->fcport;
@@ -2231,7 +2246,7 @@ qla24xx_tm_iocb_entry(scsi_qla_host_t *vha, struct req_que *req, void *tsk)
 	} else if (sts->comp_status != cpu_to_le16(CS_COMPLETE)) {
 		ql_log(ql_log_warn, fcport->vha, 0x5039,
 		    "Async-%s error - hdl=%x completion status(%x).\n",
-		    type, sp->handle, sts->comp_status);
+		    type, sp->handle, comp_status);
 		iocb->u.tmf.data = QLA_FUNCTION_FAILED;
 	} else if ((le16_to_cpu(sts->scsi_status) &
 	    SS_RESPONSE_INFO_LEN_VALID)) {
@@ -2245,6 +2260,30 @@ qla24xx_tm_iocb_entry(scsi_qla_host_t *vha, struct req_que *req, void *tsk)
 			    type, sp->handle, sts->data[3]);
 			iocb->u.tmf.data = QLA_FUNCTION_FAILED;
 		}
+	}
+
+	switch (comp_status) {
+	case CS_PORT_LOGGED_OUT:
+	case CS_PORT_CONFIG_CHG:
+	case CS_PORT_BUSY:
+	case CS_INCOMPLETE:
+	case CS_PORT_UNAVAILABLE:
+	case CS_TIMEOUT:
+	case CS_RESET:
+		if (atomic_read(&fcport->state) == FCS_ONLINE) {
+			ql_dbg(ql_dbg_disc, fcport->vha, 0x3021,
+			       "-Port to be marked lost on fcport=%02x%02x%02x, current port state= %s comp_status %x.\n",
+			       fcport->d_id.b.domain, fcport->d_id.b.area,
+			       fcport->d_id.b.al_pa,
+			       port_state_str[FCS_ONLINE],
+			       comp_status);
+
+			qlt_schedule_sess_for_deletion(fcport);
+		}
+		break;
+
+	default:
+		break;
 	}
 
 	if (iocb->u.tmf.data != QLA_SUCCESS)
@@ -3399,32 +3438,6 @@ void qla24xx_nvme_ls4_iocb(struct scsi_qla_host *vha,
 	sp->done(sp, comp_status);
 }
 
-static void qla24xx_process_mbx_iocb_response(struct scsi_qla_host *vha,
-	struct rsp_que *rsp, struct sts_entry_24xx *pkt)
-{
-	struct qla_hw_data *ha = vha->hw;
-	srb_t *sp;
-	static const char func[] = "MBX-IOCB2";
-
-	sp = qla2x00_get_sp_from_handle(vha, func, rsp->req, pkt);
-	if (!sp)
-		return;
-
-	if (sp->type == SRB_SCSI_CMD ||
-	    sp->type == SRB_NVME_CMD ||
-	    sp->type == SRB_TM_CMD) {
-		ql_log(ql_log_warn, vha, 0x509d,
-			"Inconsistent event entry type %d\n", sp->type);
-		if (IS_P3P_TYPE(ha))
-			set_bit(FCOE_CTX_RESET_NEEDED, &vha->dpc_flags);
-		else
-			set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
-		return;
-	}
-
-	qla24xx_mbx_iocb_entry(vha, rsp->req, (struct mbx_24xx_entry *)pkt);
-}
-
 /**
  * qla24xx_process_response_queue() - Process response queue entries.
  * @vha: SCSI driver HA context
@@ -3534,7 +3547,8 @@ process_err:
 			    (struct abort_entry_24xx *)pkt);
 			break;
 		case MBX_IOCB_TYPE:
-			qla24xx_process_mbx_iocb_response(vha, rsp, pkt);
+			qla24xx_mbx_iocb_entry(vha, rsp->req,
+			    (struct mbx_24xx_entry *)pkt);
 			break;
 		case VP_CTRL_IOCB_TYPE:
 			qla_ctrlvp_completed(vha, rsp->req,
@@ -3964,10 +3978,12 @@ qla24xx_enable_msix(struct qla_hw_data *ha, struct rsp_que *rsp)
 	if (USER_CTRL_IRQ(ha) || !ha->mqiobase) {
 		/* user wants to control IRQ setting for target mode */
 		ret = pci_alloc_irq_vectors(ha->pdev, min_vecs,
-		    ha->msix_count, PCI_IRQ_MSIX);
+		    min((u16)ha->msix_count, (u16)num_online_cpus()),
+		    PCI_IRQ_MSIX);
 	} else
 		ret = pci_alloc_irq_vectors_affinity(ha->pdev, min_vecs,
-		    ha->msix_count, PCI_IRQ_MSIX | PCI_IRQ_AFFINITY,
+		    min((u16)ha->msix_count, (u16)num_online_cpus()),
+		    PCI_IRQ_MSIX | PCI_IRQ_AFFINITY,
 		    &desc);
 
 	if (ret < 0) {
